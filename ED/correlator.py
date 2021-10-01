@@ -23,58 +23,72 @@ sys.path.insert(0, quspin_path)
 # Heisenberg model.                                                    #
 ########################################################################
 #
-# Heisenberg model parameers
 #
 L = 10
-Jxy = 1.0  # xy interaction
-Jzz_0 = 1.0  # zz interaction
 #
-# hamiltonian parameters
-# J_list = [[1.0, i, (i+1) % L] for i in range(L)]
-# J_list = [[1.0/4.0, i, (i+1)] for i in range(L-1)]
-J_zz = [[Jzz_0, i, (i+1) % L] for i in range(L)]  # PBC
-J_xy = [[Jxy/2.0, i, (i+1) % L] for i in range(L)]  # PBC
-static = [["+-", J_xy], ["-+", J_xy], ["zz", J_zz]]
-# static = [[op, J_list] for op in ["-+", "+-", "zz"]]
-# time vector
 times = np.linspace(0.0, 25.0, 101)
-#
-# straightforward autocorrelation function without using symmetries
-#
 
 
-def auto_correlator(L, times, S="1/2"):
+def Hamiltonian(L):
+    # Heisenberg model parameers
+    Jxy = 1.0  # xy interaction
+    Jzz_0 = 1.0  # zz interaction
+    J_zz = [[Jzz_0, i, (i+1) % L] for i in range(L)]  # PBC
+    J_xy = [[Jxy/2.0, i, (i+1) % L] for i in range(L)]  # PBC
+    static = [["+-", J_xy], ["-+", J_xy], ["zz", J_zz]]
+
     # construct basis in zero magnetization sector: no lattice symmetries
     #     basis = spin_basis_general(L, S=S, m=0, pauli=False)
     # use spin operators instead of Pauli
-    basis = spin_basis_general(L, S=S, pauli=False)
+    basis = spin_basis_general(L, S="1/2", pauli=False)
     # define Heisenberg Hamiltonian
     no_checks = dict(check_symm=False, check_herm=False, check_pcon=False)
     H = hamiltonian(static, [], basis=basis, dtype=np.float64, **no_checks)
     # compute GS
     E, V = H.eigsh(k=1, which="SA")
-    print(E[0])
-    psi_GS = V[:, 0]
+    print("ground energy: ", E[0])
+    return H, basis, E, V
+
+#
+# straightforward autocorrelation function without using symmetries
+#
+
+
+def auto_correlator(H, basis, E, V, r, t0, t):
+    psi_GS = np.copy(V[:, 0])
     # evolve GS under H (gives a trivial phase factor)
-    psi_GS_t = H.evolve(psi_GS, 0.0, times)
+#     print(t0, t)
+    psi_GS_t = H.evolve(psi_GS, t0, t)
     #
     # define operator O to compute the autocorrelation function of
     #
-    op_list = [["x", [0], np.sqrt(2.0)]]
+    op_list = [["z", [0], np.sqrt(2.0)]]
     # use inplace_Op to apply operator O on psi_GS
 #     Opsi_GS = basis.inplace_Op(psi_GS, op_list, np.float64)
     Opsi_GS = basis.inplace_Op(psi_GS, op_list, np.complex64)
     # time evolve Opsi_GS under H
-    Opsi_GS_t = H.evolve(Opsi_GS, 0.0, times)
+    Opsi_GS_t = H.evolve(Opsi_GS, t0, t)
     # apply operator O on time-evolved psi_t
 #     op_list2 = [["-", [0], np.sqrt(2.0)]]
 #     O_psi_GS_t = basis.inplace_Op(psi_GS_t, op_list, np.float64)
     O_psi_GS_t = basis.inplace_Op(psi_GS_t, op_list, np.complex64)
     # compute autocorrelator
-    C_t = np.einsum("ij,ij->j", O_psi_GS_t.conj(), Opsi_GS_t)
-    #
+    if len(t) == 1:
+        # vdot with take complex conjugate of the first vector
+        C_t = np.vdot(O_psi_GS_t, Opsi_GS_t)
+    else:
+        C_t = np.einsum("ij,ij->j", O_psi_GS_t.conj(), Opsi_GS_t)
     return C_t
 #
+
+
+H, basis, E, V = Hamiltonian(L)
+
+Jxy = 1.0  # xy interaction
+Jzz_0 = 1.0  # zz interaction
+J_zz = [[Jzz_0, i, (i+1) % L] for i in range(L)]  # PBC
+J_xy = [[Jxy/2.0, i, (i+1) % L] for i in range(L)]  # PBC
+static = [["+-", J_xy], ["-+", J_xy], ["zz", J_zz]]
 
 
 def auto_correlator_symm(L, times, S="1/2"):
@@ -126,13 +140,24 @@ def auto_correlator_symm(L, times, S="1/2"):
 
 #
 # compute autocorrelation function
-C_t = auto_correlator(L, times)
-C_t_symm = auto_correlator_symm(L, times)
+C_t = np.zeros(len(times), dtype=np.complex64)
+
+for (ti, t) in enumerate(times):
+    print(ti)
+#     if ti == 0:
+#         t0 = 0.0
+#     else:
+#         t0 = times[ti-1]
+    t0 = 0.0
+    C_t[ti] = auto_correlator(H, basis, E, V, 0, t0, [t, ])
+# C_t = auto_correlator(H, basis, E, V, 0, 0.0, times)
 #
 # plot result
 #
 plt.plot(times, C_t.real, '-b', label='no symm.: $\\mathrm{Re}\\;C(t)$')
 plt.plot(times, C_t.imag, '-r', label='no symm.: $\\mathrm{Im}\\;C(t)$')
+
+C_t_symm = auto_correlator_symm(L, times, S="1/2")
 #
 plt.plot(times, C_t_symm.real, 'ob', label='symm.: $\\mathrm{Re}\\;C(t)$')
 plt.plot(times, C_t_symm.imag, 'or', label='symm.: $\\mathrm{Im}\\;C(t)$')
